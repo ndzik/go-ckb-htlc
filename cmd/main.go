@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"time"
 
 	"github.com/jroimartin/gocui"
 	"github.com/liushooter/blake2b"
@@ -31,21 +32,14 @@ var secretmessage = "secret message"
 var invalidmessage = "invalid message"
 var htlcContract = "htlc-debug"
 
-var logv, failv *gocui.View
-var htlcTxHash, lockTxHash *types.Hash
+var logv, failv, ledgerv *gocui.View
+var htlcTxHash, lockTxHash, codeHash *types.Hash
 
 func main() {
-	//client, err := rpc.Dial("http://127.0.0.1:8114")
-	//if err != nil {
-	//	log.Fatalf("dialing rpc error: %v", err)
-	//}
-
-	//codeHash, htlcTxHash, err := deployHTLCAt(client)
-	//if err != nil {
-	//	log.Fatalf("deploying htlc-contract: %v", err)
-	//}
-	//fmt.Printf("CODE_HASH: %s\n", codeHash.String())
-	//fmt.Printf("HTLC-TX-HASH: %s\n", htlcTxHash.String())
+	client, err := rpc.Dial("http://127.0.0.1:8114")
+	if err != nil {
+		log.Fatalf("dialing rpc error: %v", err)
+	}
 
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
@@ -55,43 +49,65 @@ func main() {
 
 	g.SetManagerFunc(layout)
 
+	codeHash, htlcTxHash, err = deployHTLCAt(client)
+	if err != nil {
+		log.Fatalf("deploying htlc-contract: %v", err)
+	}
+	go g.Update(func(g *gocui.Gui) error {
+		time.Sleep(time.Second * 1)
+		v, err := g.View("Logv")
+		if err != nil {
+			log.Fatalf("getting logv printin meta: %v", err)
+		}
+		fmt.Fprintf(v, "CODEHASH: %v\n", codeHash.String())
+		fmt.Fprintf(v, "HTLC-TX-HASH: %v\n", htlcTxHash.String())
+		return nil
+	})
+
 	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
 		log.Panicln(err)
 	}
-	//if err := g.SetKeybinding("", '1', gocui.ModNone, func(*gocui.Gui, *gocui.View) error {
-	//	lockHash, err := lockPayment(client, 420, codeHash)
-	//	if err != nil {
-	//		return errors.WithMessage(err, "locking payment")
-	//	}
-	//	fmt.Fprintf(logv, "LOCK-HASH: %v\n", lockHash.String())
-	//	return nil
-	//}); err != nil {
-	//	fmt.Fprintln(failv, err)
-	//}
-	//if err := g.SetKeybinding("", '2', gocui.ModNone, func(*gocui.Gui, *gocui.View) error {
-	//	unlockTxHash, err := unlockLockSecret(client, *htlcTxHash, *lockTxHash)
-	//	if err != nil {
-	//		return errors.WithMessage(err, "unlocking funds")
-	//	}
-	//	fmt.Fprintf(logv, "UNLOCK-TX-HASH: %v\n", unlockTxHash.String())
-	//	return nil
-	//}); err != nil {
-	//	fmt.Fprintln(failv, err)
-	//}
-	//if err := g.SetKeybinding("", '3', gocui.ModNone, func(*gocui.Gui, *gocui.View) error {
-	//	unlockTxHash, err := unlockLockTO(client, *htlcTxHash, *lockTxHash)
-	//	if err != nil {
-	//		return errors.WithMessage(err, "unlocking funds")
-	//	}
-	//	fmt.Fprintf(logv, "UNLOCK-TX-HASH: %v\n", unlockTxHash.String())
-	//	return nil
-	//}); err != nil {
-	//	fmt.Fprintln(failv, err)
-	//}
+	if err := g.SetKeybinding("", '1', gocui.ModNone, func(*gocui.Gui, *gocui.View) error {
+		lockTxHash, err = lockPayment(client, 420, *codeHash)
+		if err != nil {
+			fmt.Fprintf(failv, "%#v\n", errors.WithMessage(err, "locking payment"))
+			return nil
+		}
+		go watch(lockTxHash)
+		fmt.Fprintf(logv, "LOCK-HASH: %v\n", lockTxHash.String())
+		return nil
+	}); err != nil {
+		fmt.Fprintln(failv, err)
+	}
+	if err := g.SetKeybinding("", '2', gocui.ModNone, func(*gocui.Gui, *gocui.View) error {
+		unlockTxHash, err := unlockLockSecret(client, *htlcTxHash, *lockTxHash)
+		if err != nil {
+			fmt.Fprintf(failv, "%#v\n", errors.WithMessage(err, "unlocking funds"))
+			return nil
+		}
+		fmt.Fprintf(logv, "UNLOCK-TX-HASH: %v\n", unlockTxHash.String())
+		return nil
+	}); err != nil {
+		fmt.Fprintln(failv, err)
+	}
+	if err := g.SetKeybinding("", '3', gocui.ModNone, func(*gocui.Gui, *gocui.View) error {
+		unlockTxHash, err := unlockLockTO(client, *htlcTxHash, *lockTxHash)
+		if err != nil {
+			fmt.Fprintf(failv, "%#v\n", errors.WithMessage(err, "unlocking funds"))
+			return nil
+		}
+		fmt.Fprintf(logv, "UNLOCK-TX-HASH: %v\n", unlockTxHash.String())
+		return nil
+	}); err != nil {
+		fmt.Fprintln(failv, err)
+	}
 
 	if err := g.MainLoop(); err != nil && err != gocui.ErrQuit {
 		log.Panicln(err)
 	}
+}
+
+func watch(txHash *types.Hash) {
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {
@@ -100,10 +116,11 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 
 func layout(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
-	if _, err := g.SetView("TXs", -1, -1, int(0.4*float32(maxX)), maxY); err != nil {
+	if v, err := g.SetView("Ledger", -1, -1, int(0.4*float32(maxX)), maxY); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
+		ledgerv = v
 	}
 	if v, err := g.SetView("Logv", int(0.4*float32(maxX)), -1, maxX, int(0.5*float32(maxY+1))); err != nil {
 		if err != gocui.ErrUnknownView {
@@ -154,40 +171,42 @@ func layout(g *gocui.Gui) error {
 //	}
 //}
 
-func deployHTLCAt(client rpc.Client) (types.Hash, *types.Hash, error) {
+func deployHTLCAt(client rpc.Client) (*types.Hash, *types.Hash, error) {
 	pay, err := payment.NewPayment(fromAddress, toAddress, bytesToShannon(200500), 200800)
 	if err != nil {
-		return types.Hash{}, nil, err
+		return nil, nil, err
 	}
 
 	tx, err := pay.GenerateTx(client)
 	if err != nil {
-		return types.Hash{}, nil, err
+		return nil, nil, err
 	}
 
 	data, err := ioutil.ReadFile(htlcContract)
 	if err != nil {
-		return types.Hash{}, nil, err
+		return nil, nil, err
 	}
 
 	tx.OutputsData[0] = data
 
 	key, err := secp256k1.HexToKey(bobPrivkey)
 	if err != nil {
-		return types.Hash{}, nil, err
+		return nil, nil, err
 	}
 
 	_, err = pay.Sign(key)
 	if err != nil {
-		return types.Hash{}, nil, errors.WithMessage(err, "unable to sign htlc-contract tx")
+		return nil, nil, errors.WithMessage(err, "unable to sign htlc-contract tx")
 	}
 
 	htlcTxHash, err := pay.Send(client)
 	if err != nil {
-		return types.Hash{}, nil, errors.WithMessage(err, "unable to deploy htlc-contract")
+		return nil, nil, errors.WithMessage(err, "unable to deploy htlc-contract")
 	}
 
-	return blake2b.CkbSum256(data), htlcTxHash, nil
+	dataHash := blake2b.CkbSum256(data)
+	codeHash := types.Hash(dataHash)
+	return &codeHash, htlcTxHash, nil
 }
 
 func htlcTypeScript(codeHash types.Hash) (*types.Script, error) {
@@ -215,7 +234,7 @@ func lockPayment(client rpc.Client, amount int64, codeHash types.Hash) (*types.H
 	if err != nil {
 		log.Fatalf("generating htlcScript hash: %v", err)
 	}
-	fmt.Printf("SCRIPT-HASH: %s\n", scriptHash.String())
+	fmt.Fprintf(logv, "SCRIPT-HASH: %s\n", scriptHash.String())
 	pay, err := payment.NewPayment(fromAddress, toAddress, bytesToShannon(amount), 10000)
 	if err != nil {
 		return nil, errors.WithMessage(err, "creating payment")
@@ -323,8 +342,8 @@ func unlockLockTO(client rpc.Client, htlcTxHash, lockTxHash types.Hash) (*types.
 	}
 
 	lockBlockHash := *txX.TxStatus.BlockHash
-	fmt.Printf("Blockhash of LOCK-TX: %#x\n", lockBlockHash.Bytes())
-	fmt.Printf("Blockhash of TipHeader: %#x\n", tipHeader.Hash.Bytes())
+	fmt.Fprintf(ledgerv, "Blockhash of LOCK-TX: %#x\n", lockBlockHash.Bytes())
+	fmt.Fprintf(ledgerv, "Blockhash of TipHeader: %#x\n", tipHeader.Hash.Bytes())
 	tx.HeaderDeps = append(tx.HeaderDeps, tipHeader.Hash, lockBlockHash)
 
 	key, err := secp256k1.HexToKey(bobPrivkey)
