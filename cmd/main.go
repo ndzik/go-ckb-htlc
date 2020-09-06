@@ -63,6 +63,7 @@ func main() {
 		}
 		fmt.Fprintf(v, "CODEHASH: %v\n", codeHash.String())
 		fmt.Fprintf(v, "HTLC-TX-HASH: %v\n", htlcTxHash.String())
+		go watch(client, g, htlcTxHash)
 		return nil
 	})
 
