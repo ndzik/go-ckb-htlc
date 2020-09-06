@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math/big"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jroimartin/gocui"
@@ -24,10 +26,10 @@ import (
 	htlc "test/blockchain"
 )
 
-var bobSecpArg = "891d2fb5c93d7c4f73d36ee519e2e8cb7259e52f"
-var bobPrivkey = "29ec7b9fd73fa9588b27686a1a4d7215dd4fa127681b912935b1df2ab42ab97b"
-var fromAddress = "ckt1qyqgj8f0khyn6lz0w0fkaegeut5vkujeu5hs3rggyw"
-var toAddress = "ckt1qyqgj8f0khyn6lz0w0fkaegeut5vkujeu5hs3rggyw"
+var bobSecpArg = "06f64f73b0917b45a1544168ad66ecc2805b13a4"
+var bobPrivkey = "8817ec90e89553dad26d18e76ef70855ccecb970d784814eb13102e8e947f5ae"
+var fromAddress = "ckt1qyqqdaj0wwcfz769592yz69dvmkv9qzmzwjq0xefx2"
+var toAddress = "ckt1qyqqdaj0wwcfz769592yz69dvmkv9qzmzwjq0xefx2"
 var secretmessage = "secret message"
 var invalidmessage = "invalid message"
 var htlcContract = "htlc-debug"
@@ -73,7 +75,7 @@ func main() {
 			fmt.Fprintf(failv, "%#v\n", errors.WithMessage(err, "locking payment"))
 			return nil
 		}
-		go watch(lockTxHash)
+		go watch(client, g, lockTxHash)
 		fmt.Fprintf(logv, "LOCK-HASH: %v\n", lockTxHash.String())
 		return nil
 	}); err != nil {
@@ -85,6 +87,7 @@ func main() {
 			fmt.Fprintf(failv, "%#v\n", errors.WithMessage(err, "unlocking funds"))
 			return nil
 		}
+		go watch(client, g, unlockTxHash)
 		fmt.Fprintf(logv, "UNLOCK-TX-HASH: %v\n", unlockTxHash.String())
 		return nil
 	}); err != nil {
@@ -96,7 +99,20 @@ func main() {
 			fmt.Fprintf(failv, "%#v\n", errors.WithMessage(err, "unlocking funds"))
 			return nil
 		}
+		go watch(client, g, unlockTxHash)
 		fmt.Fprintf(logv, "UNLOCK-TX-HASH: %v\n", unlockTxHash.String())
+		return nil
+	}); err != nil {
+		fmt.Fprintln(failv, err)
+	}
+	if err := g.SetKeybinding("", 'k', gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+		scroll(ledgerv, -1)
+		return nil
+	}); err != nil {
+		fmt.Fprintln(failv, err)
+	}
+	if err := g.SetKeybinding("", 'j', gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+		scroll(ledgerv, 1)
 		return nil
 	}); err != nil {
 		fmt.Fprintln(failv, err)
@@ -107,72 +123,79 @@ func main() {
 	}
 }
 
-func watch(txHash *types.Hash) {
+func watch(client rpc.Client, g *gocui.Gui, txHash *types.Hash) {
+	for {
+		tx, err := client.GetTransaction(context.Background(), *txHash)
+		if err != nil {
+			fmt.Fprintln(failv, err)
+		}
+		b, err := json.MarshalIndent(tx, "", "\t")
+		if err != nil {
+			fmt.Fprintln(failv, err)
+		}
+		g.Update(func(g *gocui.Gui) error {
+			ledgerv.Clear()
+			v, err := g.View("Ledger")
+			if err != nil {
+				log.Fatalf("getting ledgerv: %v", err)
+			}
+			fmt.Fprintf(v, "%s\n", b)
+			return nil
+		})
+		if tx.TxStatus.Status == "committed" {
+			break
+		}
+		time.Sleep(time.Second * 1)
+	}
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {
 	return gocui.ErrQuit
 }
 
+func scroll(v *gocui.View, dy int) {
+	_, y := v.Size()
+	ox, oy := v.Origin()
+
+	if oy+dy > strings.Count(v.ViewBuffer(), "\n")-y-1 {
+		v.Autoscroll = true
+	} else {
+		v.Autoscroll = false
+		v.SetOrigin(ox, oy+dy)
+	}
+}
+
 func layout(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
-	if v, err := g.SetView("Ledger", -1, -1, int(0.4*float32(maxX)), maxY); err != nil {
-		if err != gocui.ErrUnknownView {
-			return err
-		}
-		ledgerv = v
-	}
 	if v, err := g.SetView("Logv", int(0.4*float32(maxX)), -1, maxX, int(0.5*float32(maxY+1))); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
+		v.Wrap = true
+		v.Autoscroll = true
 		logv = v
 	}
 	if v, err := g.SetView("Failv", int(0.4*float32(maxX)), int(0.5*float32(maxY)), maxX, maxY); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
+		v.Wrap = true
+		v.Autoscroll = true
 		failv = v
+	}
+	if v, err := g.SetView("Ledger", -1, -1, int(0.4*float32(maxX)), maxY); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		v.Wrap = true
+		v.Autoscroll = true
+		ledgerv = v
 	}
 	return nil
 }
 
-//func run() {
-//	codeHash, htlcTxHash, err := deployHTLCAt(client)
-//	if err != nil {
-//		log.Fatalf("deploying htlc-contract: %v", err)
-//	}
-//	fmt.Printf("CODE_HASH: %s\n", codeHash.String())
-//	fmt.Printf("HTLC-TX-HASH: %s\n", htlcTxHash.String())
-//
-//	time.Sleep(time.Second * 6)
-//	lockTxHash, err := lockPayment(client, 420, htlcScript)
-//	if err != nil {
-//		log.Fatalf("locking payment with htlc-contract: %v", err)
-//	}
-//	fmt.Printf("LOCK-TX-HASH: %s\n", lockTxHash.String())
-//
-//	time.Sleep(time.Second * 6)
-//
-//	unlockTxHash, err := unlockLockTO(client, *htlcTxHash, *lockTxHash)
-//	if err != nil {
-//		log.Printf("unlocking transaction: %v", err)
-//	} else {
-//		fmt.Printf("UNLOCK-TX-HASH: %s\n", unlockTxHash.String())
-//	}
-//
-//	time.Sleep(time.Second * 46)
-//
-//	unlockTxHash, err = unlockLockTO(client, *htlcTxHash, *lockTxHash)
-//	if err != nil {
-//		log.Printf("unlocking transaction: %v", err)
-//	} else {
-//		fmt.Printf("SECOND UNLOCK-TX-HASH: %s\n", unlockTxHash.String())
-//	}
-//}
-
 func deployHTLCAt(client rpc.Client) (*types.Hash, *types.Hash, error) {
-	pay, err := payment.NewPayment(fromAddress, toAddress, bytesToShannon(200500), 200800)
+	pay, err := payment.NewPayment(fromAddress, toAddress, bytesToShannon(200500), 200900)
 	if err != nil {
 		return nil, nil, err
 	}
