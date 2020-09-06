@@ -123,77 +123,6 @@ func main() {
 	}
 }
 
-func watch(client rpc.Client, g *gocui.Gui, txHash *types.Hash) {
-	for {
-		tx, err := client.GetTransaction(context.Background(), *txHash)
-		if err != nil {
-			fmt.Fprintln(failv, err)
-		}
-		b, err := json.MarshalIndent(tx, "", "\t")
-		if err != nil {
-			fmt.Fprintln(failv, err)
-		}
-		g.Update(func(g *gocui.Gui) error {
-			ledgerv.Clear()
-			v, err := g.View("Ledger")
-			if err != nil {
-				log.Fatalf("getting ledgerv: %v", err)
-			}
-			fmt.Fprintf(v, "%s\n", b)
-			return nil
-		})
-		if tx.TxStatus.Status == "committed" {
-			break
-		}
-		time.Sleep(time.Second * 1)
-	}
-}
-
-func quit(g *gocui.Gui, v *gocui.View) error {
-	return gocui.ErrQuit
-}
-
-func scroll(v *gocui.View, dy int) {
-	_, y := v.Size()
-	ox, oy := v.Origin()
-
-	if oy+dy > strings.Count(v.ViewBuffer(), "\n")-y-1 {
-		v.Autoscroll = true
-	} else {
-		v.Autoscroll = false
-		v.SetOrigin(ox, oy+dy)
-	}
-}
-
-func layout(g *gocui.Gui) error {
-	maxX, maxY := g.Size()
-	if v, err := g.SetView("Logv", int(0.4*float32(maxX)), -1, maxX, int(0.5*float32(maxY+1))); err != nil {
-		if err != gocui.ErrUnknownView {
-			return err
-		}
-		v.Wrap = true
-		v.Autoscroll = true
-		logv = v
-	}
-	if v, err := g.SetView("Failv", int(0.4*float32(maxX)), int(0.5*float32(maxY)), maxX, maxY); err != nil {
-		if err != gocui.ErrUnknownView {
-			return err
-		}
-		v.Wrap = true
-		v.Autoscroll = true
-		failv = v
-	}
-	if v, err := g.SetView("Ledger", -1, -1, int(0.4*float32(maxX)), maxY); err != nil {
-		if err != gocui.ErrUnknownView {
-			return err
-		}
-		v.Wrap = true
-		v.Autoscroll = true
-		ledgerv = v
-	}
-	return nil
-}
-
 func deployHTLCAt(client rpc.Client) (*types.Hash, *types.Hash, error) {
 	pay, err := payment.NewPayment(fromAddress, toAddress, bytesToShannon(200500), 200900)
 	if err != nil {
@@ -532,4 +461,74 @@ func genAddrFrom(pubKey []byte) string {
 	}
 
 	return addr
+}
+
+func quit(g *gocui.Gui, v *gocui.View) error {
+	return gocui.ErrQuit
+}
+
+func scroll(v *gocui.View, dy int) {
+	_, y := v.Size()
+	ox, oy := v.Origin()
+
+	if oy+dy > strings.Count(v.ViewBuffer(), "\n")-y-1 {
+		v.Autoscroll = true
+	} else {
+		v.Autoscroll = false
+		v.SetOrigin(ox, oy+dy)
+	}
+}
+func layout(g *gocui.Gui) error {
+	maxX, maxY := g.Size()
+	if v, err := g.SetView("Logv", int(0.4*float32(maxX)), -1, maxX, int(0.5*float32(maxY+1))); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		v.Wrap = true
+		v.Autoscroll = true
+		logv = v
+	}
+	if v, err := g.SetView("Failv", int(0.4*float32(maxX)), int(0.5*float32(maxY)), maxX, maxY); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		v.Wrap = true
+		v.Autoscroll = true
+		failv = v
+	}
+	if v, err := g.SetView("Ledger", -1, -1, int(0.4*float32(maxX)), maxY); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		v.Wrap = true
+		v.Autoscroll = true
+		ledgerv = v
+	}
+	return nil
+}
+
+func watch(client rpc.Client, g *gocui.Gui, txHash *types.Hash) {
+	for {
+		tx, err := client.GetTransaction(context.Background(), *txHash)
+		if err != nil {
+			fmt.Fprintln(failv, err)
+		}
+		b, err := json.MarshalIndent(tx, "", "\t")
+		if err != nil {
+			fmt.Fprintln(failv, err)
+		}
+		g.Update(func(g *gocui.Gui) error {
+			ledgerv.Clear()
+			v, err := g.View("Ledger")
+			if err != nil {
+				log.Fatalf("getting ledgerv: %v", err)
+			}
+			fmt.Fprintf(v, "%s\n", b)
+			return nil
+		})
+		if tx.TxStatus.Status == "committed" {
+			break
+		}
+		time.Sleep(time.Second * 1)
+	}
 }
