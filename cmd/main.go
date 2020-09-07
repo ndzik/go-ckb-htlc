@@ -50,12 +50,13 @@ func main() {
 	defer g.Close()
 
 	g.SetManagerFunc(layout)
+	g.Mouse = true
 
-	codeHash, htlcTxHash, err = deployHTLCAt(client)
-	if err != nil {
-		log.Fatalf("deploying htlc-contract: %v", err)
-	}
 	go g.Update(func(g *gocui.Gui) error {
+		codeHash, htlcTxHash, err = deployHTLCAt(client)
+		if err != nil {
+			log.Fatalf("deploying htlc-contract: %v", err)
+		}
 		time.Sleep(time.Second * 1)
 		v, err := g.View("Logv")
 		if err != nil {
@@ -63,7 +64,6 @@ func main() {
 		}
 		fmt.Fprintf(v, "CODEHASH: %v\n", codeHash.String())
 		fmt.Fprintf(v, "HTLC-TX-HASH: %v\n", htlcTxHash.String())
-		go watch(client, g, htlcTxHash)
 		return nil
 	})
 
@@ -102,6 +102,18 @@ func main() {
 		}
 		go watch(client, g, unlockTxHash)
 		fmt.Fprintf(logv, "UNLOCK-TX-HASH: %v\n", unlockTxHash.String())
+		return nil
+	}); err != nil {
+		fmt.Fprintln(failv, err)
+	}
+	if err := g.SetKeybinding("", gocui.MouseWheelDown, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+		scroll(ledgerv, -1)
+		return nil
+	}); err != nil {
+		fmt.Fprintln(failv, err)
+	}
+	if err := g.SetKeybinding("", gocui.MouseWheelUp, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+		scroll(ledgerv, 1)
 		return nil
 	}); err != nil {
 		fmt.Fprintln(failv, err)
@@ -313,6 +325,7 @@ func unlockLockTO(client rpc.Client, htlcTxHash, lockTxHash types.Hash) (*types.
 	}
 	ioutil.WriteFile("dumpedTX", txSer, os.ModeAppend)
 
+	dumpTX(client, tx)
 	txHash, err := client.SendTransaction(context.Background(), tx)
 	if err != nil {
 		return nil, errors.WithMessage(err, "sending transaction")
@@ -479,27 +492,33 @@ func scroll(v *gocui.View, dy int) {
 }
 func layout(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
-	if v, err := g.SetView("Logv", int(0.4*float32(maxX)), -1, maxX, int(0.5*float32(maxY+1))); err != nil {
+	if v, err := g.SetView("Logv", int(0.4*float32(maxX))+1, 0, maxX-1, int(0.5*float32(maxY))-1); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
 		v.Wrap = true
+		v.Frame = true
+		v.Title = "[TX-Hashes]"
 		v.Autoscroll = true
 		logv = v
 	}
-	if v, err := g.SetView("Failv", int(0.4*float32(maxX)), int(0.5*float32(maxY)), maxX, maxY); err != nil {
+	if v, err := g.SetView("Failv", int(0.4*float32(maxX))+1, int(0.5*float32(maxY)), maxX-1, maxY-1); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
 		v.Wrap = true
+		v.Frame = true
+		v.Title = "[Error-Log]"
 		v.Autoscroll = true
 		failv = v
 	}
-	if v, err := g.SetView("Ledger", -1, -1, int(0.4*float32(maxX)), maxY); err != nil {
+	if v, err := g.SetView("Ledger", 0, 0, int(0.4*float32(maxX)), maxY-1); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
 		v.Wrap = true
+		v.Frame = true
+		v.Title = "[TX-Dissect]"
 		v.Autoscroll = true
 		ledgerv = v
 	}
@@ -530,4 +549,13 @@ func watch(client rpc.Client, g *gocui.Gui, txHash *types.Hash) {
 		}
 		time.Sleep(time.Second * 1)
 	}
+}
+
+func dumpTX(client rpc.Client, tx *types.Transaction) {
+	b, err := json.MarshalIndent(tx, "", "\t")
+	if err != nil {
+		fmt.Fprintln(failv, err)
+	}
+	ledgerv.Clear()
+	fmt.Fprintf(ledgerv, "%s\n", b)
 }
