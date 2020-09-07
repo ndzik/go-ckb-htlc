@@ -295,8 +295,6 @@ func unlockLockTO(client rpc.Client, htlcTxHash, lockTxHash types.Hash) (*types.
 	}
 
 	lockBlockHash := *txX.TxStatus.BlockHash
-	fmt.Fprintf(ledgerv, "Blockhash of LOCK-TX: %#x\n", lockBlockHash.Bytes())
-	fmt.Fprintf(ledgerv, "Blockhash of TipHeader: %#x\n", tipHeader.Hash.Bytes())
 	tx.HeaderDeps = append(tx.HeaderDeps, tipHeader.Hash, lockBlockHash)
 
 	key, err := secp256k1.HexToKey(bobPrivkey)
